@@ -1,0 +1,7 @@
+numpy
+sentence-transformers
+
+[dev]
+pytest
+black
+mypy
