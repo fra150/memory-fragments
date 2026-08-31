@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-fragments"
+version = "0.1.0"
+authors = [
+  { name = "Francesco Bulla", email = "150francescobulla@gmail.com" },
+]
+description = "Un modello modulare per la risoluzione di problemi complessi basato su frammenti di memoria."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy",
+  "sentence-transformers"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "black",
+  "mypy"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["memory_fragments"]
