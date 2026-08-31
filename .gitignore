@@ -1,11 +1,43 @@
-```gitignore
-# Python cache files
+```
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+.Python
+env/
+venv/
+.venv/
+.env
+.env.local
+.env.*
 
-# Compiled Python files in specific directories
-engine/__pycache__/
-models/__pycache__/
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Build and distribution
+build/
+dist/
+*.egg
+*.whl
+*.zip
+*.tar.gz
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
 ```
