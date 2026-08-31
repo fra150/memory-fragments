@@ -1,2 +1,0 @@
-[console_scripts]
-memory-fragments = memory_fragments.cli:main

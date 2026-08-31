@@ -1,254 +1,240 @@
 #!/usr/bin/env python3
 """
 Memory Fragments V2 — Demo Completa del Flusso
+===============================================
 
-Questa demo esercita il flusso completo V2:
-1. Ingest di documenti grezzi
-2. Retrieval ibrido (BM25 + embedding)
-3. Appeal trial per modifiche proposte
-4. Governance human-in-the-loop
+Questa demo esercita il flusso completo V2 tramite l'orchestratore
+:class:`memory_fragments.model.MemoryFragmentsModel`:
+
+1. Ingest  — frammenti protetti dal FragmentGuardian
+2. Query   — retrieval ibrido (BM25 + embedding) e composizione
+3. Appeal  — proposta di modifica nel trial space con metriche automatiche
+4. Governance — submit → human approval/rejection (human-in-the-loop)
+5. Export  — statistiche aggregate e stato serializzato del modello
 
 Prerequisiti:
-- pip install -e .
-- Documenti di esempio in /raw/ (opzionale)
+- ``pip install -e .``
+- Opzionale: ``pip install sentence-transformers`` per embedding reali.
+  Senza, la demo usa embeddings deterministici di fallback (offline).
+
+Esecuzione:
+    python examples/run_demo_v2.py            # offline (default)
+    python examples/run_demo_v2.py --online   # usa sentence-transformers se disponibile
 """
 
+import argparse
 import sys
 from pathlib import Path
 
-# Aggiungi il workspace al path se necessario
-workspace = Path(__file__).resolve().parent
+# Aggiungi la root del package al path se necessario
+workspace = Path(__file__).resolve().parent.parent
 if str(workspace) not in sys.path:
     sys.path.insert(0, str(workspace))
 
-from memory_fragments.config import default_config
-from memory_fragments.models.fragment import Fragment as MemoryFragment
-from memory_fragments.models.appeal import Appeal
-from memory_fragments.archive import AppealTrialSpace
-from memory_fragments.models.graph import GenealogyGraph
-from memory_fragments.engine.evaluator import Evaluator
-from memory_fragments.retrieval.retriever import HybridRetriever
-from memory_fragments.library.guardian import FragmentGuardian
-from memory_fragments.governance.api import GovernanceAPI
+from memory_fragments.model import MemoryFragmentsModel
+from memory_fragments.models import (
+    AppealOperation,
+    Fragment,
+    FragmentMetadata,
+    OperationType,
+)
 
 
-def demo_ingest():
-    """Dimostra l'ingest di un fragment."""
-    print("\n" + "="*60)
-    print("📥 FASE 1: INGEST DI UN FRAGMENT")
-    print("="*60)
-    
-    from memory_fragments.models.fragment import FragmentMetadata
-    
-    # Crea un fragment di esempio
-    fragment = MemoryFragment(
-        fragment_id="demo-fotosintesi-001",
-        content="La fotosintesi clorofilliana è il processo attraverso cui le piante convertono luce solare in energia chimica.",
-        metadata=FragmentMetadata(
-            source="wiki/biologia/fotosintesi.md",
-            topic="biologia",
-            tags=["fotosintesi", "piante", "energia", "biologia"]
-        )
-    )
-    
-    print(f"✓ Fragment creato:")
-    print(f"  - ID: {fragment.fragment_id}")
-    print(f"  - Topic: {fragment.metadata.topic}")
-    print(f"  - Tags: {fragment.metadata.tags}")
-    print(f"  - Content length: {len(fragment.content)} chars")
-    
-    return fragment
+def _force_offline(model: MemoryFragmentsModel) -> None:
+    """Forza embeddings di fallback (nessun download / chiamata di rete)."""
+    model.retriever.embedding._fallback = True
 
 
-def demo_retrieval(fragment: MemoryFragment):
-    """Dimostra il retrieval ibrido."""
-    print("\n" + "="*60)
-    print("🔍 FASE 2: RETRIEVAL IBRIDO (BM25 + Embedding)")
-    print("="*60)
-    
-    # Crea un retriever ibrido
-    retriever = HybridRetriever()
-    
-    # Aggiungi il fragment all'index
-    retriever.add_fragment(fragment)
-    
-    # Esegui una query
+def demo_ingest(model: MemoryFragmentsModel):
+    """Fase 1 — Ingest di frammenti con il guardian della qualità."""
+    print("\n" + "=" * 60)
+    print("FASE 1: INGEST DI UN FRAGMENT")
+    print("=" * 60)
+
+    fragments = [
+        Fragment(
+            fragment_id="demo-fotosintesi-001",
+            content=(
+                "La fotosintesi clorofilliana è il processo attraverso cui "
+                "le piante convertono la luce solare in energia chimica."
+            ),
+            metadata=FragmentMetadata(
+                source="wiki/biologia/fotosintesi.md",
+                topic="biologia",
+                quality=0.92,
+                tags=["fotosintesi", "piante", "energia"],
+            ),
+        ),
+        Fragment(
+            fragment_id="demo-fotosintesi-002",
+            content=(
+                "Durante la fotosintesi vengono prodotti glucosio e ossigeno "
+                "come sottoprodotti a partire da anidride carbonica e acqua."
+            ),
+            metadata=FragmentMetadata(
+                source="wiki/biologia/fotosintesi.md",
+                topic="biologia",
+                quality=0.90,
+                tags=["fotosintesi", "glucosio", "ossigeno"],
+            ),
+        ),
+    ]
+
+    for fragment in fragments:
+        result = model.ingest(fragment)
+        if not result.ok:
+            print(f"  RIFIUTATO {fragment.fragment_id}: {result.reason}")
+            continue
+        print(f"  Accettato: {fragment.fragment_id}")
+        print(f"    - Topic: {fragment.metadata.topic}")
+        print(f"    - Tags:  {', '.join(fragment.metadata.tags)}")
+        print(f"    - Qualità: {fragment.metadata.quality:.2f}")
+
+    return fragments
+
+
+def demo_query(model: MemoryFragmentsModel):
+    """Fase 2 — Retrieval ibrido (BM25 + embedding) e composizione."""
+    print("\n" + "=" * 60)
+    print("FASE 2: QUERY — RETRIEVAL IBRIDO (BM25 + EMBEDDING)")
+    print("=" * 60)
+
     query = "come le piante producono energia dalla luce solare?"
-    results = retriever.retrieve(query, top_k=3)
-    
-    print(f"✓ Query: '{query}'")
-    print(f"✓ Risultati trovati: {len(results)}")
-    
-    for i, result in enumerate(results, 1):
-        # results è una lista di tuple (Fragment, score)
-        frag, score = result
-        print(f"\n  [{i}] Score: {score:.4f}")
-        print(f"      Fragment ID: {frag.fragment_id}")
-        print(f"      Preview: {frag.content[:80]}...")
-    
-    return retriever, results
+    result = model.query(query, top_k=3)
+
+    print(f"  Query: '{query}'")
+    print(f"  Frammenti rilevanti: {len(result.fragments)}")
+    for i, (frag, score) in enumerate(zip(result.fragments, result.scores), 1):
+        print(f"    [{i}] score={score:.4f}  id={frag.fragment_id}")
+        print(f"        preview: {frag.content[:70]}...")
+
+    print("\n  Risposta composta:")
+    for line in result.response.splitlines():
+        print(f"    {line}")
+
+    return result
 
 
-def demo_appeal(fragment: MemoryFragment):
-    """Dimostra l'appeal trial per modifiche."""
-    print("\n" + "="*60)
-    print("⚖️  FASE 3: APPEAL TRIAL (SANDBOX MODIFICHE)")
-    print("="*60)
-    
-    # Crea uno spazio di appeal
-    trial_space = AppealTrialSpace()
-    
-    # Proponi una modifica al fragment
-    modified_content = "La fotosintesi clorofilliana è il processo attraverso cui le piante convertono luce solare in energia chimica, producendo glucosio e ossigeno come sottoprodotti."
-    
-    diff_proposed = {
-        "field": "content",
-        "old_value": fragment.content,
-        "new_value": modified_content,
-        "reason": "Aggiunta informazioni sui sottoprodotti della fotosintesi"
-    }
-    
-    # Avvia la sessione di appeal
-    appeal = trial_space.start_edit_session(fragment, diff_proposed)
-    
-    print(f"✓ Appeal avviato:")
-    print(f"  - Appeal ID: {appeal.id}")
-    print(f"  - Status: {appeal.status}")
-    print(f"  - Reason: {diff_proposed['reason']}")
-    print(f"  - Modifica proposta: campo '{diff_proposed['field']}'")
-    
-    # Valuta la modifica con l'evaluator
-    evaluator = Evaluator()
-    metrics = evaluator.evaluate([fragment], [modified_content])
-    
-    print(f"\n✓ Metriche di valutazione:")
-    print(f"  - Delta token: {metrics.delta_token}")
-    print(f"  - Coverage: {metrics.coverage:.2%}")
-    print(f"  - Risk score: {metrics.hallucination_risk:.2%}")
-    
-    return trial_space, appeal, metrics
+def demo_appeal(model: MemoryFragmentsModel, fragment: Fragment):
+    """Fase 3 — Appeal trial: proposta di modifica con metriche automatiche."""
+    print("\n" + "=" * 60)
+    print("FASE 3: APPEAL TRIAL (SANDBOX MODIFICHE)")
+    print("=" * 60)
+
+    modified_content = (
+        "La fotosintesi clorofilliana è il processo attraverso cui le piante "
+        "convertono la luce solare in energia chimica, producendo glucosio e "
+        "ossigeno come sottoprodotti."
+    )
+
+    appeal = model.propose(
+        appeal_id="A-demo-001",
+        source_ids=[fragment.fragment_id],
+        proposed_content=modified_content,
+        explanation="Aggiunta dei sottoprodotti (glucosio e ossigeno) alla descrizione.",
+        ops=[AppealOperation(op_type=OperationType.ANNOTATE)],
+    )
+
+    print(f"  Appeal creato: {appeal.appeal_id}")
+    print(f"    - Sorgenti: {appeal.sources}")
+    print(f"    - Status:   {appeal.status.value}")
+    print(f"    - Metriche:")
+    print(f"        delta_token    = {appeal.metrics.delta_token}")
+    print(f"        coverage       = {appeal.metrics.coverage:.2%}")
+    print(f"        risk           = {appeal.metrics.risk:.2%}")
+    print(f"        aggregate_score= {appeal.metrics.aggregate_score:.4f}")
+    print(f"    - Diff (aggiunte): {', '.join(appeal.diff.added[:5]) or '-'}")
+
+    return appeal
 
 
-def demo_governance(appeal: Appeal, metrics):
-    """Dimostra la governance human-in-the-loop."""
-    print("\n" + "="*60)
-    print("👥 FASE 4: GOVERNANCE HUMAN-IN-THE-LOOP")
-    print("="*60)
-    
-    # Crea l'API di governance
-    governance = GovernanceAPI()
-    
-    # Determina se la modifica può essere auto-approvata
-    risk_threshold = default_config.evaluator.risk_threshold
-    auto_approve = metrics.hallucination_risk < risk_threshold
-    
-    print(f"✓ Soglia di rischio configurata: {risk_threshold:.2%}")
-    print(f"✓ Rischio calcolato: {metrics.hallucination_risk:.2%}")
-    print(f"✓ Auto-approvazione possibile: {auto_approve}")
-    
-    if auto_approve:
-        print(f"\n✓ La modifica può essere auto-approvata (rischio < soglia)")
-        # Simula l'approvazione automatica
-        approved = True
-        decision = "auto_approved"
-    else:
-        print(f"\n⚠️  La modifica richiede revisione umana (rischio >= soglia)")
-        # Simula la richiesta di revisione umana
-        print(f"  - Pending review in governance queue")
-        approved = False
-        decision = "pending_human_review"
-    
-    print(f"\n✓ Decisione: {decision}")
-    
-    return governance, approved, decision
+def demo_governance(model: MemoryFragmentsModel, appeal):
+    """Fase 4 — Governance human-in-the-loop: submit → approve."""
+    print("\n" + "=" * 60)
+    print("FASE 4: GOVERNANCE HUMAN-IN-THE-LOOP")
+    print("=" * 60)
+
+    report = model.submit(appeal.appeal_id)
+    print(f"  Inviato per revisione: {report.appeal_id}")
+    print(f"    - Status: {report.status.value}")
+
+    risk_threshold = model.evaluator.config.risk_threshold
+    auto_ok = appeal.metrics.risk < risk_threshold
+    print(f"  Soglia di rischio: {risk_threshold:.2%}")
+    print(f"  Rischio calcolato: {appeal.metrics.risk:.2%}")
+    print(f"  Rischio sotto soglia (auto-approvabile): {auto_ok}")
+
+    approved = model.approve(
+        appeal.appeal_id,
+        approver="reviewer",
+        notes="Modifica coerente con le fonti.",
+    )
+    print(f"  Approvato! Nuovo frammento: {approved.fragment_id}")
+    print(f"    - Parents: {approved.parents}")
+    print(f"    - Qualità: {approved.metadata.quality:.2f}")
+
+    return approved
 
 
-def demo_genealogy(fragment: MemoryFragment, approved: bool):
-    """Dimostra il tracciamento genealogico (DAG)."""
-    print("\n" + "="*60)
-    print("🌳 FASE 5: GENEALOGY GRAPH (DAG VERSIONING)")
-    print("="*60)
-    
-    # Crea il grafo genealogico
-    graph = GenealogyGraph()
-    
-    # Aggiungi il fragment originale
-    graph.add_fragment(fragment)
-    
-    # Se approvato, crea una nuova versione
-    if approved:
-        modified_content = "La fotosintesi clorofilliana è il processo attraverso cui le piante convertono luce solare in energia chimica, producendo glucosio e ossigeno come sottoprodotti."
-        
-        new_fragment = MemoryFragment(
-            content=modified_content,
-            source=fragment.source,
-            topic=fragment.topic,
-            tags=fragment.tags,
-            parent_id=fragment.id
-        )
-        
-        graph.add_fragment(new_fragment)
-        
-        print(f"✓ Nuova versione creata:")
-        print(f"  - Parent: {fragment.id}")
-        print(f"  - Child: {new_fragment.id}")
-    
-    # Calcola metriche del grafo
-    depth = graph.get_max_depth()
-    node_count = len(graph.fragments)
-    
-    print(f"\n✓ Metriche del DAG:")
-    print(f"  - Nodi totali: {node_count}")
-    print(f"  - Profondità massima: {depth}")
-    
-    return graph
+def demo_statistics(model: MemoryFragmentsModel):
+    """Fase 5 — Statistiche aggregate e stato esportabile."""
+    print("\n" + "=" * 60)
+    print("FASE 5: STATISTICHE E EXPORT DELLO STATO")
+    print("=" * 60)
+
+    stats = model.get_statistics()
+    model_stats = stats.get("model", {})
+    print(f"  Archive fragments : {model_stats.get('archive_count')}")
+    print(f"  Appeal attivi     : {model_stats.get('active_appeals')}")
+    print(f"  Nodi genealogy    : {model_stats.get('graph_nodes')}")
+
+    state = model.export_state()
+    print(f"  Stato esportato   : schema={state['schema']} version={state['version']}")
+
+    return state
 
 
-def main():
-    """Esegue la demo completa del flusso V2."""
-    print("\n" + "🧠"*30)
-    print(" MEMORY FRAGMENTS V2 — DEMO COMPLETA")
-    print("🧠"*30)
-    print("\nQuesto script dimostra il flusso completo:")
-    print("  1. Ingest → 2. Retrieval → 3. Appeal → 4. Governance → 5. Genealogy")
-    
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Memory Fragments V2 — demo del flusso completo."
+    )
+    parser.add_argument(
+        "--online",
+        action="store_true",
+        help="tenta di usare sentence-transformers per gli embedding reali",
+    )
+    args = parser.parse_args()
+
+    print("\n" + "=" * 60)
+    print("MEMORY FRAGMENTS V2 — DEMO DEL FLUSSO COMPLETO")
+    print("=" * 60)
+    print("  1. Ingest -> 2. Query -> 3. Appeal -> 4. Governance -> 5. Export")
+
     try:
-        # Fase 1: Ingest
-        fragment = demo_ingest()
-        
-        # Fase 2: Retrieval
-        retriever, results = demo_retrieval(fragment)
-        
-        # Fase 3: Appeal
-        trial_space, appeal, metrics = demo_appeal(fragment)
-        
-        # Fase 4: Governance
-        governance, approved, decision = demo_governance(appeal, metrics)
-        
-        # Fase 5: Genealogy
-        graph = demo_genealogy(fragment, approved)
-        
-        # Summary finale
-        print("\n" + "="*60)
-        print("✅ DEMO COMPLETATA CON SUCCESSO")
-        print("="*60)
-        print(f"\nRiepilogo:")
-        print(f"  ✓ Fragment ingestito: {fragment.id}")
-        print(f"  ✓ Retrieval eseguito: {len(results)} risultati")
-        print(f"  ✓ Appeal trial: {appeal.status}")
-        print(f"  ✓ Governance decision: {decision}")
-        print(f"  ✓ Genealogy graph: {len(graph.fragments)} nodi")
-        
-        print(f"\n📄 Per ulteriori informazioni:")
-        print(f"  - Paper V1: doi:10.5281/zenodo.14534720")
-        print(f"  - Paper V2: doi:10.5281/zenodo.17069503")
-        print(f"  - GitHub: https://github.com/fra150/memory-fragments")
-        
+        model = MemoryFragmentsModel()
+        if not args.online:
+            _force_offline(model)
+            print("  [offline] embeddings di fallback deterministici attivi")
+
+        fragments = demo_ingest(model)
+        demo_query(model)
+        appeal = demo_appeal(model, fragments[0])
+        demo_governance(model, appeal)
+        demo_statistics(model)
+
+        print("\n" + "=" * 60)
+        print("DEMO COMPLETATA CON SUCCESSO")
+        print("=" * 60)
+        print("  Riferimenti:")
+        print("    - Paper V1: doi:10.5281/zenodo.14534720")
+        print("    - Paper V2: doi:10.5281/zenodo.17069503")
+        print("    - GitHub  : https://github.com/fra150/memory-fragments")
         return 0
-        
-    except Exception as e:
-        print(f"\n❌ ERRORE DURANTE LA DEMO: {e}")
+
+    except Exception as exc:  # noqa: BLE001 - la demo deve riportare l'errore
+        print(f"\nERRORE DURANTE LA DEMO: {exc}")
         import traceback
+
         traceback.print_exc()
         return 1
 

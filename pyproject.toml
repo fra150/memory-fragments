@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memory-fragments"
-version = "0.3.0"
+version = "0.4.0"
 description = "A Modular Cognitive Model for Solving Complex Problems Based on Memory Fragments (V2)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -57,10 +57,20 @@ Documentation = "https://github.com/fra150/memory-fragments#readme"
 [project.scripts]
 memory-fragments = "memory_fragments.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["*.py"]
-exclude = ["memory-fragments*", "archive*"]
+[tool.setuptools]
+# Flat-layout: the repository root IS the ``memory_fragments`` package.
+# (legacy v0.1.0 is excluded — it lives under ``archive/legacy/``.)
+package-dir = {"memory_fragments" = "."}
+packages = [
+    "memory_fragments",
+    "memory_fragments.archive",
+    "memory_fragments.calibration",
+    "memory_fragments.engine",
+    "memory_fragments.governance",
+    "memory_fragments.library",
+    "memory_fragments.models",
+    "memory_fragments.retrieval",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

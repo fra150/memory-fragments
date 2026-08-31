@@ -1,9 +1,0 @@
-README.md
-pyproject.toml
-memory_fragments.egg-info/PKG-INFO
-memory_fragments.egg-info/SOURCES.txt
-memory_fragments.egg-info/dependency_links.txt
-memory_fragments.egg-info/entry_points.txt
-memory_fragments.egg-info/requires.txt
-memory_fragments.egg-info/top_level.txt
-tests/test_evaluator.py

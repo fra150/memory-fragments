@@ -55,6 +55,9 @@ from memory_fragments.engine import (
 # -- Governance ----------------------------------------------------------------
 from memory_fragments.governance import GovernanceAPI, GovernanceReport
 
+# -- Model (unified orchestrator) ---------------------------------------------
+from memory_fragments.model import MemoryFragmentsModel, IngestResult, QueryResult
+
 # -- Library (Cassetti) --------------------------------------------------------
 from memory_fragments.library import (
     Cassetto,
@@ -85,7 +88,7 @@ from memory_fragments.config import (
     default_config,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     # Models
     "Fragment",
@@ -126,6 +129,10 @@ __all__ = [
     # Governance
     "GovernanceAPI",
     "GovernanceReport",
+    # Model (unified orchestrator)
+    "MemoryFragmentsModel",
+    "IngestResult",
+    "QueryResult",
     # Library
     "Cassetto",
     "CassettoConfig",

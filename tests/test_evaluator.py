@@ -1,102 +1,166 @@
-"""Test suite for Evaluator module (v0.3.0 V2).
+"""Test suite for the Evaluator module (v0.4.0 V2).
 
 Tests cover:
-- Automatic metrics computation (delta_token, coverage, risk)
-- Embedding-based coverage (optional)
+- Automatic metrics computation (delta_token, coverage, risk, aggregate_score)
+- Embedding-based coverage fallback (deterministic, no network)
 - Contradiction detection (heuristic placeholder)
-- Risk threshold configuration
+- Risk / vagueness penalties
+- Configuration handling
 """
 
 import pytest
-from typing import List
 
-from memory_fragments.models import Fragment, FragmentMetadata, FragmentStatus
-from memory_fragments.engine.evaluator import Evaluator, EvaluationResult
+from memory_fragments.models import Appeal, AppealMetrics, Fragment, FragmentMetadata
+from memory_fragments.engine.evaluator import Evaluator
 from memory_fragments.config import EvaluatorConfig, default_config
 
 
-class TestEvaluatorMetrics:
-    """Test automatic metric computation."""
+def make_fragment(fragment_id: str, content: str, quality: float = 0.8) -> Fragment:
+    return Fragment(
+        fragment_id=fragment_id,
+        content=content,
+        metadata=FragmentMetadata(topic="test", quality=quality),
+    )
 
-    def test_delta_token_computation(self):
-        """Test that delta_token is computed correctly."""
-        query = "What is photosynthesis?"
-        candidate = Fragment(
-            fragment_id="test-001",
-            content="Photosynthesis converts CO2 and water into glucose using sunlight.",
-            metadata=FragmentMetadata(topic="biology", quality=0.9),
-            status=FragmentStatus.ACTIVE,
+
+def make_appeal(proposed_content: str, sources: list[str]) -> Appeal:
+    return Appeal(appeal_id="appeal-1", sources=sources, proposed_content=proposed_content)
+
+
+class TestEvaluatorMetrics:
+    """Test automatic metric computation via the real evaluate() API."""
+
+    def test_evaluate_returns_appeal_metrics(self):
+        source = make_fragment("src-1", "Photosynthesis converts CO2 and water into glucose.")
+        appeal = make_appeal(
+            "Photosynthesis converts CO2 and water into glucose using sunlight.",
+            sources=["src-1"],
         )
-        
-        result = Evaluator.evaluate_single(query, candidate)
-        
-        assert result.delta_token >= 0
-        # Candidate should not be excessively longer than query
-        assert result.delta_token < 100  # reasonable upper bound
+
+        metrics = Evaluator().evaluate(appeal, [source])
+
+        assert isinstance(metrics, AppealMetrics)
+        # Proposed content is longer than the source -> positive delta_token
+        assert metrics.delta_token >= 0
+        # Some words overlap (photosynthesis, converts, co2, water, glucose)
+        assert 0.0 < metrics.coverage <= 1.0
+        assert 0.0 <= metrics.risk <= 1.0
+
+    def test_delta_token_savings_for_shorter_proposal(self):
+        source = make_fragment("src-2", "The mitochondria is the powerhouse of the cell and makes us smart.")
+        appeal = make_appeal("The mitochondria is the powerhouse of the cell.", sources=["src-2"])
+
+        metrics = Evaluator().evaluate(appeal, [source])
+
+        assert metrics.delta_token < 0  # shorter proposal = token savings
 
     def test_coverage_word_overlap(self):
-        """Test word overlap coverage computation."""
-        query = "heart anatomy four chambers"
-        candidate = Fragment(
-            fragment_id="test-002",
-            content="The human heart has four chambers: two atria and two ventricles.",
-            metadata=FragmentMetadata(topic="anatomy", quality=0.85),
-            status=FragmentStatus.ACTIVE,
+        query_text = "The human heart has four chambers two atria and two ventricles"
+        source = make_fragment("src-3", query_text)
+        appeal = make_appeal(
+            "The human heart has four chambers: two atria and two ventricles.",
+            sources=["src-3"],
         )
-        
-        result = Evaluator.evaluate_single(query, candidate)
-        
-        # Should have some coverage due to word overlap (heart, four, chambers)
-        assert result.coverage > 0.0
-        assert result.coverage <= 1.0
 
-    def test_risk_computation(self):
-        """Test risk score computation."""
-        query = "explain quantum physics"
-        candidate = Fragment(
-            fragment_id="test-003",
-            content="Quantum physics is stuff about particles and waves maybe.",
-            metadata=FragmentMetadata(topic="physics", quality=0.5),
-            status=FragmentStatus.ACTIVE,
-        )
-        
-        result = Evaluator.evaluate_single(query, candidate)
-        
-        assert result.risk >= 0.0
-        assert result.risk <= 1.0
-        # Vague content should have higher risk
-        assert result.risk > 0.1
+        metrics = Evaluator().evaluate(appeal, [source])
 
-    def test_overall_score_weights(self):
-        """Test that overall_score respects configured weights."""
-        query = "test query"
-        candidate = Fragment(
-            fragment_id="test-004",
-            content="test content with some words",
-            metadata=FragmentMetadata(topic="test", quality=0.7),
-            status=FragmentStatus.ACTIVE,
+        assert 0.0 <= metrics.coverage <= 1.0
+        assert metrics.coverage > 0.5  # high overlap with source
+
+    def test_vague_proposal_raises_risk(self):
+        source = make_fragment("src-4", "Quantum physics describes subatomic particles and waves.")
+        appeal = make_appeal(
+            "Quantum physics is stuff about particles and waves maybe probably.",
+            sources=["src-4"],
         )
-        
-        result = Evaluator.evaluate_single(query, candidate)
-        
-        # Overall score should be weighted combination
-        assert result.overall_score >= 0.0
-        assert result.overall_score <= 1.0
+
+        metrics = Evaluator().evaluate(appeal, [source])
+
+        # Hedging words (maybe, probably) push risk up
+        assert 0.0 <= metrics.risk <= 1.0
+        assert metrics.risk > 0.0
+
+    def test_overall_score_within_bounds(self):
+        source = make_fragment("src-5", "Testing content with some shared words here.")
+        appeal = make_appeal(
+            "Testing content with some shared words here and a little more detail.",
+            sources=["src-5"],
+        )
+
+        metrics = Evaluator().evaluate(appeal, [source])
+
+        assert -1.0 <= metrics.aggregate_score <= 1.0
+
+    def test_serialization_roundtrip(self):
+        metrics = AppealMetrics(delta_token=10, coverage=0.75, risk=0.15, aggregate_score=0.8)
+        restored = AppealMetrics.from_dict(metrics.to_dict())
+
+        assert restored == metrics
+
+
+class TestEvaluatorEmbeddingFallback:
+    """Embedding coverage must degrade gracefully without sentence-transformers."""
+
+    def test_embedding_coverage_enabled_without_package_returns_zero(self, monkeypatch):
+        cfg = EvaluatorConfig(use_embedding_coverage=True, embedding_model="nonexistent-model")
+        evaluator = Evaluator(cfg)
+
+        # Force the fallback path (no real model load / no network access).
+        monkeypatch.setattr(
+            evaluator, "_ensure_embedding_model",
+            lambda: setattr(evaluator, "_embedding_fallback", True),
+        )
+
+        source = make_fragment("src-6", "Some source content about plants and sunlight.")
+        appeal = make_appeal("Some source content about plants and sunlight.", sources=["src-6"])
+
+        # No sentence-transformers installed -> fallback returns 0.0,
+        # blended with word overlap -> coverage still in [0,1].
+        metrics = evaluator.evaluate(appeal, [source])
+
+        assert 0.0 <= metrics.coverage <= 1.0
+
+
+class TestEvaluatorContradiction:
+    """Test the contradiction detection heuristic (placeholder)."""
+
+    def test_no_contradiction_similar_content(self):
+        evaluator = Evaluator()
+        score = evaluator._detect_contradiction(
+            "The heart pumps blood through the body.",
+            ["The heart circulates blood throughout the organism."],
+        )
+
+        assert isinstance(score, float)
+        assert 0.0 <= score <= 1.0
+        assert score < 0.5  # no negation words -> low score
+
+    def test_negation_heavy_proposal_raises_score(self):
+        evaluator = Evaluator()
+        score = evaluator._detect_contradiction(
+            "The heart does not pump blood and cannot circulate anything.",
+            ["The heart pumps blood through the body."],
+        )
+
+        assert 0.0 <= score <= 1.0
+        assert score > 0.5  # many negation words
+
+    def test_empty_inputs(self):
+        evaluator = Evaluator()
+        assert evaluator._detect_contradiction("", []) == 0.0
+        assert evaluator._detect_contradiction("some text", []) == 0.0
 
 
 class TestEvaluatorConfig:
     """Test Evaluator configuration."""
 
     def test_default_risk_threshold(self):
-        """Test default risk threshold is 0.1."""
         assert default_config.evaluator.risk_threshold == 0.1
 
     def test_use_embedding_coverage_default(self):
-        """Test embedding coverage is disabled by default."""
         assert default_config.evaluator.use_embedding_coverage is False
 
     def test_custom_config(self):
-        """Test custom configuration overrides."""
         custom_config = EvaluatorConfig(
             risk_threshold=0.2,
             use_embedding_coverage=True,
@@ -104,80 +168,10 @@ class TestEvaluatorConfig:
             w_coverage=0.3,
             w_risk=0.2,
         )
-        
+
         assert custom_config.risk_threshold == 0.2
         assert custom_config.use_embedding_coverage is True
         assert custom_config.w_delta_token == 0.5
-
-
-class TestContradictionDetection:
-    """Test contradiction detection (heuristic placeholder)."""
-
-    def test_no_contradiction_similar_content(self):
-        """Test that similar content doesn't trigger contradiction."""
-        text_a = "The heart pumps blood through the body."
-        text_b = "The heart circulates blood throughout the organism."
-        
-        has_contradiction, confidence = Evaluator._detect_contradiction(text_a, text_b)
-        
-        assert has_contradiction is False
-        # Heuristic should not flag paraphrases as contradictions
-        assert confidence < 0.5
-
-    def test_potential_contradiction_opposite_claims(self):
-        """Test that opposite claims may trigger contradiction heuristic."""
-        text_a = "The heart has four chambers."
-        text_b = "The heart has two chambers only."
-        
-        has_contradiction, confidence = Evaluator._detect_contradiction(text_a, text_b)
-        
-        # Heuristic may or may not catch this (it's a placeholder)
-        # Test ensures the method runs without errors
-        assert isinstance(has_contradiction, bool)
-        assert isinstance(confidence, float)
-        assert 0.0 <= confidence <= 1.0
-
-
-class TestEvaluationResult:
-    """Test EvaluationResult data structure."""
-
-    def test_to_dict(self):
-        """Test serialization to dictionary."""
-        result = EvaluationResult(
-            fragment_id="test-001",
-            delta_token=10,
-            coverage=0.75,
-            risk=0.15,
-            overall_score=0.80,
-            has_contradiction=False,
-            contradiction_confidence=0.1,
-        )
-        
-        d = result.to_dict()
-        
-        assert d["fragment_id"] == "test-001"
-        assert d["delta_token"] == 10
-        assert d["coverage"] == 0.75
-        assert d["risk"] == 0.15
-        assert d["overall_score"] == 0.80
-        assert d["has_contradiction"] is False
-
-    def test_repr(self):
-        """Test string representation."""
-        result = EvaluationResult(
-            fragment_id="test-002",
-            delta_token=5,
-            coverage=0.6,
-            risk=0.2,
-            overall_score=0.7,
-            has_contradiction=False,
-            contradiction_confidence=0.05,
-        )
-        
-        repr_str = repr(result)
-        
-        assert "test-002" in repr_str
-        assert "score=0.7" in repr_str or "overall_score=0.7" in repr_str
 
 
 if __name__ == "__main__":

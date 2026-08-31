@@ -103,10 +103,14 @@ class MockQualityAgent:
                 score = max(0.0, score - 0.4)
                 break
 
-        # Add small random noise to simulate agent variation (±0.05)
+        # Add small random noise to simulate agent variation (±0.05).
+        # The seed is derived deterministically (zlib.crc32) so that scores are
+        # reproducible across runs regardless of PYTHONHASHSEED.
         import random
+        import zlib
 
-        rng = random.Random(hash(content) + hash(self.config.name))
+        seed = zlib.crc32(f"{content}::{self.config.name}".encode("utf-8"))
+        rng = random.Random(seed)
         noise = (rng.random() - 0.5) * 0.1
         score = max(0.0, min(1.0, score + noise))
 

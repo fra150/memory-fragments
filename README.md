@@ -1,102 +1,132 @@
-# Memory Fragments — Project README
+# Memory Fragments V2
 
-## 📌 Panoramica
-**Memory Fragments** è un modello cognitivo modulare (v0.3.0 V2) per la risoluzione di problemi complessi basati su "frammenti di memoria". L'architettura integra:
+Modello cognitivo modulare per la risoluzione di problemi complessi basato su
+"frammenti di memoria" (Bulla, 2024-2025). Il repository contiene il codice
+**v0.4.0** dell'architettura V2 e conserva la legacy v0.1.0 in `archive/legacy/`.
 
-- **StaticArchive** immutabile
-- **AppealTrial** sandbox per modifiche approvate
-- **GenealogyGraph** DAG del versioning
-- **GovernanceAPI** human-in-the-loop
-- **HybridRetriever** (BM25 + embedding)
-- **Evaluator** con metriche automatiche (token/coverage/risk)
-- **AgentCircuit** a 3 agenti + calibrazione
-- **Rastrello** (pattern discovery)
-- Library (`Cassetto`, `Quarantine`, `Circuit`, `Guardian`, `Improver`, `System`)
+## Architettura
 
-## 🗂️ Struttura del progetto
+| Componente | Descrizione |
+|---|---|
+| `StaticArchive` | Archivio immutabile di frammenti con checksum e controllo duplicati |
+| `HybridRetriever` | Retrieval ibrido BM25 + embedding (con fallback offline deterministico) |
+| `AppealTrialSpace` | Sandbox dove il modello propone modifiche ai frammenti |
+| `Evaluator` | Metriche automatiche: `delta_token`, `coverage`, `risk`, `aggregate_score` |
+| `DiffExplainEngine` | Diff strutturato + spiegazioni leggibili per la revisione |
+| `GenealogyGraph` | DAG del versioning (antenati, discendenti, profondità, provenance) |
+| `GovernanceAPI` | Workflow human-in-the-loop: submit → approve/reject → rollback |
+| `AgentCircuit` | Circuito a 3 agenti deterministici (hard reject / grey zone / fast accept) |
+| `FragmentGuardian` | Qualità gate all'ingresso dei `Cassetto` (threshold 0.80, override per source) |
+| `Cassetto` | Scaffale di libreria per dominio con guardian all'ingresso |
+| `MemoryFragmentsModel` | **Orchestratore unificato**: ingest → query → appeal → governance → export |
+| `Rastrello`, `Modellatore`, `Dispatcher` | Pattern discovery, tabs/slots, instradamento |
+
+## Struttura
+
 ```
-memory_fragments/
-├── .gitignore              ← esclude .pyc, __pycache__, *.egg-info, /output/, /raw/
-├── __init__.py             ← pacchetto Python principal
-├── config.py               ← EvaluatorConfig + GovernanceConfig (v0.3.0)
-├── raw/                    ← documenti grezzi + note temporanee
-│   └── README.md           ← convenzione file compiled_
-├── wiki/                   ← fonte della verità
-│   ├── indice.md           ← indice delle sottocartelle
-│   ├── progetti/
-│   ├── clienti/
-│   └── eventi/
-├── output/                 ← report generati, riassunti, documenti
-│   └── lavoro_da_svolgere.md
-├── engine/                 ← modulo motore
-│   ├── conflict.py         ← placeholder NLI (heuristic + TODO ONNX)
-│   ├── evaluator.py        ← metriche + rilevamento contraddizioni (placeholder)
-│   ├── modellatore.py      ← _extract_tabs_and_slots (embedding + heuristic)
-│   └── ...
-├── governance/             ← governance API human-in-the-loop
-│   └── api.py
-├── models/                 ← modelli dati (MemoryFragment, Appeal, Metrics, Graph)
-│   ├── fragment.py
-│   ├── appeal.py
-│   ├── graph.py
-│   └── quality.py
-├── library/                ← cassette/utility
-│   ├── cassetto.py
-│   ├── circuit.py
-│   ├── guardian.py
-│   ├── improver.py
-│   ├── quarantine.py
-│   └── system.py
-├── calibration/            ← dataset di calibrazione (15 esempi + TODO espansione)
-│   ├── dataset.py
-│   ├── agents.py
-│   ├── validator.py
-│   └── __init__.py
-└── retrieval/              └── indice + retriever BM25+embedding
-    ├── __init__.py
-    ├── indexer.py
-    └── retriever.py
+memory_fragments/          ← package (flat-layout, la root IS il package)
+├── __init__.py            ← export pubblico, __version__ = "0.4.0"
+├── cli.py                 ← CLI (python -m memory_fragments)
+├── __main__.py            ← entry point `python -m memory_fragments`
+├── model.py               ← orchestratore MemoryFragmentsModel
+├── config.py              ← default_config (Retriever/Evaluator/Governance/...)
+├── models/                ← dataclass: Fragment, Appeal, AppealMetrics, GenealogyGraph, QualityProvenance
+├── archive/               ← StaticArchive, AppealTrialSpace
+├── retrieval/             ← BM25Indexer, EmbeddingIndexer, HybridRetriever
+├── engine/                ← Evaluator, DiffExplainEngine, Composer, ConflictDetector, Intake, Rastrello, Modellatore
+├── governance/            ← GovernanceAPI, GovernanceReport
+├── library/               ← Cassetto, FragmentGuardian, AgentCircuit, Quarantine, Improver, LibrarySystem
+├── calibration/           ← dataset di calibrazione + agenti deterministici
+├── examples/              ← run_demo_v2.py (demo del flusso completo)
+└── tests/                 ← 136 test pytest (verdi)
 ```
 
-## 🚀 Quickstart (esempio minimale)
-```python
-from memory_fragments import StaticArchive, HybridRetriever, Evaluator, GovernanceAPI
+## Installazione
 
-# 1. Inizializza l'archivio
-archive = StaticArchive()
-
-# 2. Aggiungi knowledge (es. documenti grezzi in /raw/)
-archive.add_knowledge("path/to/raw/document.txt")
-
-# 3. Query con retrieval ibrido
-results = archive.query("concetto chiave", top_k=5)
-
-# 4. Valuta con metriche automatiche
-metrics = Evaluator.evaluate(results)
-
-# 5. Avvia sessione di modifica in sandbox
-appeal = appeal.start_edit_session(diff_proposed)
-```
-
-## 📄 Paper di riferimento
-- **V1 (2024)**: *A Modular Cognitive Model for Solving Complex Problems Based on "Memory Fragments"* — doi:10.5281/zenodo.14534720
-- **V2 (2025)**: *Memory Fragments V2* (Appeal Trial, DAG, metriche automatiche, governance) — doi:10.5281/zenodo.17069503
-
-## 🛠️ Stato attuale (2026-08-31)
-- `main` sincronizzato su GitHub: legacy v0.1.0 (`memory-fragments/`) + codice v0.3.0 V2 alla radice
-- Work plan: `output/lavoro_da_svolgere.md` elenca gap funzionali, pulizie, test, allineamento
-- `.gitignore` creato per escludere `/output/`, `/raw/`, `__pycache__/`, `*.egg-info/`
-- Autenticazione GitHub attiva via `gh` CLI
-
-## 📦 Installazione (dev)
 ```bash
 git clone https://github.com/fra150/memory-fragments.git
 cd memory-fragments
-# Opzionale: crea un ambiente virtuale
-python -m venv .venv && source .venv/Scripts/activate
 pip install -e .
+# Opzionali:
+pip install -e ".[embedding]"   # sentence-transformers per embedding reali
+pip install -e ".[llm]"         # openai + anthropic per gli improver LLM
+pip install -e ".[dev]"         # pytest, black, flake8, mypy
 ```
-> Nota: le dipendenze opzionali (`sentence-transformers`, `openai`, `anthropic`) sono commentate in `config.py`; attivarle quando necessario.
 
-## 📜 Licenza
-Research code — vedere i paper Zenodo per citazioni e riferimento.
+## Quickstart
+
+### Orchestratore (flusso completo)
+
+```python
+from memory_fragments import Fragment, FragmentMetadata, MemoryFragmentsModel
+
+model = MemoryFragmentsModel()
+
+# 1. Ingest
+frag = Fragment(
+    fragment_id="f1",
+    content="La fotosintesi usa la luce solare per produrre glucosio.",
+    metadata=FragmentMetadata(topic="biologia", quality=0.92, tags=["fotosintesi"]),
+)
+print(model.ingest(frag))  # IngestResult(accepted=True, ...)
+
+# 2. Query (retrieval ibrido + composizione)
+result = model.query("fotosintesi energia luce", top_k=3)
+print(result.response)
+
+# 3. Appeal trial con metriche automatiche
+appeal = model.propose(
+    appeal_id="A1",
+    source_ids=["f1"],
+    proposed_content="La fotosintesi usa la luce solare e produce ossigeno.",
+    explanation="Aggiunta del prodotto ossigeno.",
+)
+print(appeal.metrics)  # delta_token, coverage, risk, aggregate_score
+
+# 4. Governance human-in-the-loop
+model.submit("A1")
+approved = model.approve("A1", approver="reviewer", notes="ok")
+
+# 5. Persistenza dello stato
+model.save_state("model.json")
+restored = MemoryFragmentsModel.load_state("model.json")
+```
+
+### CLI
+
+```bash
+python -m memory_fragments version
+python -m memory_fragments init --state state.json
+python -m memory_fragments ingest --state state.json --id f1 \
+    --content "testo" --topic biologia --quality 0.9
+python -m memory_fragments query --state state.json --text "fotosintesi"
+python -m memory_fragments demo --state state.json
+```
+
+### Demo completa
+
+```bash
+python examples/run_demo_v2.py            # offline (embedding di fallback)
+python examples/run_demo_v2.py --online   # sentence-transformers
+```
+
+## Test
+
+```bash
+pip install -e ".[dev]"
+pytest            # 136 test verdi
+```
+
+Le metriche e gli agenti sono deterministici (seed `zlib.crc32`, nessun `hash()`
+di stringhe); la suite è verificata identica sotto `PYTHONHASHSEED=1` vs `777`.
+
+## Paper di riferimento
+
+- **V1 (2024)**: *A Modular Cognitive Model for Solving Complex Problems Based on "Memory Fragments"* — doi:10.5281/zenodo.14534720
+- **V2 (2025)**: *Memory Fragments V2* (Appeal Trial, DAG, metriche automatiche, governance) — doi:10.5281/zenodo.17069503
+
+Citazione consigliata per il codice: vedere [`CITATION.cff`](CITATION.cff).
+
+## Licenza
+
+MIT — vedere `LICENSE` (se presente) e i paper Zenodo per il riferimento accademico.
