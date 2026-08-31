@@ -369,6 +369,8 @@ class IntakeVerifier:
                 if emb_sim > query_coverage:
                     return emb_sim
         except Exception:
+            # Swallow embedding errors silently — fallback to word coverage
+            logger.debug("Embedding similarity computation failed, using word coverage fallback")
             pass
 
         return query_coverage

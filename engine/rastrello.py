@@ -482,6 +482,8 @@ class Rastrello:
                                 ))
 
         except SyntaxError:
+            # Invalid Python syntax — skip constant extraction
+            logger.debug("SyntaxError during constant extraction, skipping")
             pass
         except Exception as e:
             logger.debug("Error extracting constants: %s", e)
@@ -522,6 +524,8 @@ class Rastrello:
                         ))
 
         except SyntaxError:
+            # Invalid Python syntax — skip import extraction
+            logger.debug("SyntaxError during import extraction, skipping")
             pass
         except Exception as e:
             logger.debug("Error extracting imports: %s", e)
