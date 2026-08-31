@@ -1,22 +1,40 @@
-# Python
+# Compiled Python files
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
-venv/
-env/
-.venv/
-ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# Project-specific
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Build/dist directories
+dist/
+build/
+target/
+*.egg-info/
+
+# Local data (not tracked)
 /output/
 /raw/
 
-# Not ignored - wiki is the source of truth
-# /wiki/ is deliberately NOT in this file so its contents are tracked
+# Testing
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
