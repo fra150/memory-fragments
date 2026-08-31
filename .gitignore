@@ -1,1 +1,11 @@
-Nothing should be ignored since only Python source files (.py) were modified and no build artifacts, dependencies, or temporary files are present in the changes.
+```gitignore
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Compiled Python files in specific directories
+engine/__pycache__/
+models/__pycache__/
+```

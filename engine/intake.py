@@ -7,6 +7,7 @@ NO LLM calls. Latency target: < 5ms.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -14,21 +15,26 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
+from memory_fragments.config import IntakeConfig, default_config
 from memory_fragments.models import Fragment
 from memory_fragments.models.quality import QualitySource, QualityProvenance
 from memory_fragments.library.guardian import FragmentGuardian, QUALITY_THRESHOLD
 from memory_fragments.retrieval.indexer import EmbeddingIndexer, BM25Indexer
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants (DEPRECATED - kept for backward compatibility)
 # ---------------------------------------------------------------------------
 
 MIN_ASPECT_COUNT: int = 2
-"""Minimum number of query aspects to extract (fallback for short queries)."""
+"""Minimum number of query aspects to extract (fallback for short queries).
+DEPRECATED: Use IntakeConfig.min_aspects instead."""
 
 DEFAULT_CANDIDATE_THRESHOLD: float = 0.35
-"""Minimum similarity for a fragment to be considered a candidate."""
+"""Minimum similarity for a fragment to be considered a candidate.
+DEPRECATED: Use IntakeConfig.candidate_threshold instead."""
 
 
 # ---------------------------------------------------------------------------
@@ -109,20 +115,19 @@ class IntakeVerifier:
         self,
         guardian: FragmentGuardian,
         archive: "StaticArchive",
-        threshold: float = DEFAULT_CANDIDATE_THRESHOLD,
-        min_aspects: int = MIN_ASPECT_COUNT,
+        config: Optional[IntakeConfig] = None,
     ) -> None:
         """
         Args:
             guardian: Guardian instance for certification checks.
             archive: StaticArchive to scan for fragments.
-            threshold: Minimum similarity for candidates.
-            min_aspects: Minimum query aspects to extract.
+            config: Configuration overrides (uses default_config.intake if None).
         """
         self._guardian = guardian
         self._archive = archive
-        self._threshold = threshold
-        self._min_aspects = min_aspects
+        self._config = config or default_config.intake
+        self._threshold = self._config.candidate_threshold
+        self._min_aspects = self._config.min_aspects
 
         # Lazy-loaded embedder (same pattern as Evaluator/ConflictDetector)
         self._embedder: Optional[EmbeddingIndexer] = None

@@ -382,6 +382,39 @@ class Rastrello:
 
         logger.debug("record_ignored: fragment '%s' not found in trackers", fragment_id)
 
+    def record_confirmed(self, fragment_id: str) -> None:
+        """Record that a Rastrello-discovered fragment was confirmed by user feedback.
+
+        This applies a stronger negative adjustment than simple usage (feedback_confirmed_delta),
+        signaling high confidence that the pattern is valuable.
+        """
+        for tracker in self._trackers.values():
+            if tracker.signature.content_hash[:8] in fragment_id:
+                old_threshold = tracker.current_threshold
+                # Apply the confirmed delta directly
+                adjustment = self._config.feedback_confirmed_delta
+                new_threshold = max(
+                    self._config.threshold_min,
+                    min(
+                        self._config.threshold_max,
+                        tracker.current_threshold + int(round(adjustment)),
+                    ),
+                )
+                # Ensure the threshold doesn't drop below the actual count
+                if new_threshold <= tracker.count:
+                    new_threshold = tracker.count + 1
+                tracker.current_threshold = new_threshold
+                self._feedback_log.append({
+                    "fragment_id": fragment_id,
+                    "action": "confirmed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "threshold_before": old_threshold,
+                    "threshold_after": tracker.current_threshold,
+                })
+                return
+
+        logger.debug("record_confirmed: fragment '%s' not found in trackers", fragment_id)
+
     # ------------------------------------------------------------------
     # Public API -- Queries
     # ------------------------------------------------------------------
@@ -483,8 +516,7 @@ class Rastrello:
 
         except SyntaxError:
             # Invalid Python syntax — skip constant extraction
-            logger.debug("SyntaxError during constant extraction, skipping")
-            pass
+            logger.debug("SyntaxError during constant extraction in context '%s', skipping", context)
         except Exception as e:
             logger.debug("Error extracting constants: %s", e)
 

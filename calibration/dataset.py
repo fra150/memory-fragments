@@ -89,13 +89,16 @@ class CalibrationDataset:
 
     @classmethod
     def create_default(cls) -> CalibrationDataset:
-        """Create a default dataset with ~30 curated examples.
+        """Create a default dataset with 15 curated examples.
 
         These are designed to test common edge cases:
-        - Good fragments that should clearly pass
-        - Bad fragments that should clearly be rejected
-        - Borderline cases that test the grey zone
-        - Junk fragments with inflated quality claims
+        - Good fragments that should clearly pass (4 examples)
+        - Bad fragments that should clearly be rejected (4 examples)
+        - Borderline cases that test the grey zone (3 examples)
+        - Junk fragments with inflated quality claims (3 examples)
+        
+        Note: Previous versions claimed "~30 curated examples" but contained only 15.
+        The count has been corrected in the docstring. Future work: expand to 30+ examples.
         """
         dataset = cls()
 
