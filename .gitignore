@@ -1,4 +1,3 @@
-```
 # Compiled Python files
 *.pyc
 __pycache__/
@@ -14,6 +13,11 @@ venv/
 dist/
 build/
 target/
+*.egg-info/
+
+# Local data (not tracked)
+/output/
+/raw/
 
 # Testing
 .pytest_cache/
@@ -34,4 +38,3 @@ Thumbs.db
 *.swp
 *.swo
 *.tmp
-```
