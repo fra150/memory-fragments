@@ -34,6 +34,7 @@ from memory_fragments.models.quality import (
     QualitySource,
 )
 from memory_fragments.archive.static import StaticArchive
+from memory_fragments.library.circuit import AgentCircuit
 from memory_fragments.library.guardian import FragmentGuardian
 from memory_fragments.engine.intake import IntakeVerifier
 
@@ -226,6 +227,7 @@ class Rastrello:
     Usage::
 
         rastrello = Rastrello(guardian, archive, intake)
+        rastrello = Rastrello(guardian, archive, intake, circuit=AgentCircuit(agents))
 
         # Scan a codebase
         results = rastrello.scan_code(code_string, context="auth_module")
@@ -248,6 +250,7 @@ class Rastrello:
         archive: StaticArchive,
         intake: IntakeVerifier,
         config: Optional[RastrelloConfig] = None,
+        circuit: Optional[AgentCircuit] = None,
     ) -> None:
         """
         Args:
@@ -255,11 +258,15 @@ class Rastrello:
             archive: Archive for storing discovered fragments.
             intake: Intake Verifier for dedup checks.
             config: Configuration overrides.
+            circuit: Optional multi-agent voting circuit. When provided, every
+                candidate pattern is evaluated by the circuit (n agents) BEFORE
+                becoming a certified fragment. Rejected candidates are discarded.
         """
         self._guardian = guardian
         self._archive = archive
         self._intake = intake
         self._config = config or default_config.rastrello
+        self._circuit = circuit
 
         # Frequency trackers: key -> PatternFrequency
         self._trackers: Dict[str, PatternFrequency] = {}
@@ -652,6 +659,12 @@ class Rastrello:
     ) -> List[Fragment]:
         """Propose candidates to the Guardian for certification.
 
+        When a multi-agent ``circuit`` is configured, each candidate passes
+        through the n-agent vote FIRST (this is the new stage between the
+        Rastrello and the certified fragment): rejected patterns are discarded,
+        accepted ones become a vetted fragment (``MAJORITY_VOTE`` provenance)
+        before the Guardian gate.
+
         Args:
             patterns: Extracted patterns ready for certification.
 
@@ -662,6 +675,25 @@ class Rastrello:
 
         for pattern in patterns:
             fragment = pattern.to_fragment()
+
+            # --- Stage: n-agent voting (optional) ---------------------------
+            if self._circuit is not None:
+                vote = self._circuit.evaluate(fragment)
+                if not vote.accepted:
+                    logger.info(
+                        "Rastrello: '%s' rejected by %d-agent circuit "
+                        "(votes %d/%d, mean=%.2f)",
+                        pattern.name, len(self._circuit.agent_names),
+                        vote.votes_for, vote.votes_against, vote.mean_score,
+                    )
+                    continue
+                fragment = self._circuit.create_accepted_fragment(fragment, vote)
+                logger.info(
+                    "Rastrello: '%s' approved by %d-agent circuit "
+                    "(votes %d/%d, mean=%.2f)",
+                    pattern.name, len(self._circuit.agent_names),
+                    vote.votes_for, vote.votes_against, vote.mean_score,
+                )
 
             # Pass through Guardian
             accepted, result = self._guardian.guard(fragment)

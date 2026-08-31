@@ -15,11 +15,11 @@ Modello cognitivo modulare per la risoluzione di problemi complessi basato su
 | `DiffExplainEngine` | Diff strutturato + spiegazioni leggibili per la revisione |
 | `GenealogyGraph` | DAG del versioning (antenati, discendenti, profondità, provenance) |
 | `GovernanceAPI` | Workflow human-in-the-loop: submit → approve/reject → rollback |
-| `AgentCircuit` | Circuito a 3 agenti deterministici (hard reject / grey zone / fast accept) |
+| `AgentCircuit` | Circuito a n agenti (mock deterministici o LLM locali via Ollama): hard reject / grey zone / fast accept, voto di maggioranza + provenance |
 | `FragmentGuardian` | Qualità gate all'ingresso dei `Cassetto` (threshold 0.80, override per source) |
 | `Cassetto` | Scaffale di libreria per dominio con guardian all'ingresso |
 | `MemoryFragmentsModel` | **Orchestratore unificato**: ingest → query → appeal → governance → export |
-| `Rastrello`, `Modellatore`, `Dispatcher` | Pattern discovery, tabs/slots, instradamento |
+| `Rastrello`, `Modellatore`, `Dispatcher` | Pattern discovery (con fase opzionale n-agenti prima della certificazione), tabs/slots, instradamento |
 
 ## Struttura
 
@@ -38,7 +38,7 @@ memory_fragments/          ← package (flat-layout, la root IS il package)
 ├── library/               ← Cassetto, FragmentGuardian, AgentCircuit, Quarantine, Improver, LibrarySystem
 ├── calibration/           ← dataset di calibrazione + agenti deterministici
 ├── examples/              ← run_demo_v2.py (demo del flusso completo)
-└── tests/                 ← 136 test pytest (verdi)
+└── tests/                 ← 133 test pytest (verdi)
 ```
 
 ## Installazione
@@ -114,11 +114,52 @@ python examples/run_demo_v2.py --online   # sentence-transformers
 
 ```bash
 pip install -e ".[dev]"
-pytest            # 136 test verdi
+pytest            # 133 test verdi
 ```
 
-Le metriche e gli agenti sono deterministici (seed `zlib.crc32`, nessun `hash()`
+Le metriche e gli agenti mock sono deterministici (seed `zlib.crc32`, nessun `hash()`
 di stringhe); la suite è verificata identica sotto `PYTHONHASHSEED=1` vs `777`.
+
+## Agenti LLM locali (Ollama)
+
+Il `AgentCircuit` funziona anche con LLM reali eseguiti in locale via **Ollama**
+(nessun costo API). I frammenti vengono valutati da n agenti LLM con voto di
+maggioranza e provenance completa (`majority_vote_n`).
+
+```python
+from memory_fragments.calibration.agents import AgentConfig, OllamaQualityAgent
+from memory_fragments.library.circuit import AgentCircuit
+
+# Scarica un modello piccolo:  ollama pull llama3.2:1b
+def make_agent(name, temperature):
+    cfg = AgentConfig(name=name, model_id="llama3.2:1b",
+                      temperature=temperature, timeout_seconds=180)
+    return OllamaQualityAgent(cfg, ollama_model="llama3.2:1b", fallback_to_mock=False)
+
+circuit = AgentCircuit({
+    "strict":   make_agent("agent-llm-strict", 0.1),
+    "balanced": make_agent("agent-llm-balanced", 0.3),
+    "generous": make_agent("agent-llm-generous", 0.5),
+})
+
+result = circuit.evaluate(fragment)
+if result.accepted:
+    vetted = circuit.create_accepted_fragment(fragment, result)
+```
+
+Il circuito LLM può essere iniettato anche nel **Rastrello**: ogni pattern estratto
+passa dal voto n-agenti prima di diventare un frammento certificato:
+
+```python
+rastrello = Rastrello(guardian, archive, intake, circuit=circuit)
+certified = rastrello.propose_candidates(rastrello.scan_code(code, context="mod"))
+# certified: solo i pattern approvati dal voto, con id "<id>_vetted"
+```
+
+> Nota: gli agenti LLM a temperatura > 0 sono stocastici — lo stesso frammento può
+> passare o essere filtrato tra esecuzioni diverse. Per gate deterministici usare i
+> mock (`create_mock_agents()`) o `temperature=0`; l'LLM è pensato per la grey zone,
+> dove la diversità di giudizio è un valore.
 
 ## Paper di riferimento
 
