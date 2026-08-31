@@ -1,7 +1,7 @@
 # Memory Fragments V2
 
 Modello cognitivo modulare per la risoluzione di problemi complessi basato su
-"frammenti di memoria" (Bulla, 2024-2025). Il repository contiene il codice
+"frammenti di memoria" (Bulla, 2025-2026). Il repository contiene il codice
 **v0.4.0** dell'architettura V2 e conserva la legacy v0.1.0 in `archive/legacy/`.
 
 ## Architettura
