@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "Se usi questo software, cita come indicato qui sotto."
+title: "Memory Fragments V2 — A Modular Cognitive Model Based on Memory Fragments"
+version: "0.4.0"
+date-released: "2026-08-31"
+license: "MIT"
+url: "https://github.com/fra150/memory-fragments"
+keywords:
+  - cognitive-model
+  - memory-fragments
+  - retrieval
+  - governance
+  - artificial-intelligence
+authors:
+  - family-names: Bulla
+    given-names: Francesco
+    email: "fra150@users.noreply.github.com"
+    website: "https://github.com/fra150"
+
+preferred-citation:
+  - type: article
+    title: "A Modular Cognitive Model for Solving Complex Problems Based on \"Memory Fragments\""
+    authors:
+      - family-names: Bulla
+        given-names: Francesco
+    year: 2024
+    doi: "10.5281/zenodo.14534720"
+  - type: article
+    title: "Memory Fragments V2 — Appeal Trial, DAG Versioning, Automatic Metrics, Human Governance"
+    authors:
+      - family-names: Bulla
+        given-names: Francesco
+    year: 2025
+    doi: "10.5281/zenodo.17069503"

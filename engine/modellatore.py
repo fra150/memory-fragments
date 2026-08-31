@@ -24,16 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Fragment Type for tab/slot extraction
-# ---------------------------------------------------------------------------
-
-
-class FragmentDomain(str):
-    """Simplified domain tag for fragments (not an enum — string-based for flexibility)."""
-    pass
-
-
-# ---------------------------------------------------------------------------
 # Composition Results
 # ---------------------------------------------------------------------------
 
