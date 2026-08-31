@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Project-specific
+/output/
+/raw/
+
+# Not ignored - wiki is the source of truth
+# /wiki/ is deliberately NOT in this file so its contents are tracked
