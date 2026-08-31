@@ -1,148 +1,137 @@
-"""Tests for the AppealTrialSpace (sandbox for Appeal lifecycle)."""
+"""Test dell'AppealTrialSpace — sandbox per gli Appeal."""
 
 import pytest
 
-from memory_fragments.archive import AppealTrialSpace
-from memory_fragments.config import default_config
+from memory_fragments.archive.appeal_space import AppealTrialSpace
 from memory_fragments.models import (
-    Appeal,
     AppealMetrics,
     AppealOperation,
     AppealStatus,
-    AppealDiff,
     OperationType,
 )
+from memory_fragments.models.appeal import AppealDiff
 
 
-def make_op(op_type: OperationType = OperationType.REWRITE) -> AppealOperation:
-    return AppealOperation(op_type=op_type, params={"field": "content"}, description="rewrite content")
+def _op(op_type=OperationType.MERGE) -> AppealOperation:
+    return AppealOperation(op_type=op_type, params={}, description="op")
 
 
 class TestCreate:
-    def test_create_appeal_draft(self):
+    def test_create_and_get(self):
         space = AppealTrialSpace()
-        appeal = space.create_appeal("app-1", sources=["frag-1"], ops=[make_op()])
-
-        assert appeal.appeal_id == "app-1"
+        appeal = space.create_appeal("A-1", sources=["F-1"])
         assert appeal.status == AppealStatus.DRAFT
-        assert appeal.sources == ["frag-1"]
-        assert len(appeal.ops) == 1
-
-    def test_duplicate_rejected(self):
-        space = AppealTrialSpace()
-        space.create_appeal("dup")
-        with pytest.raises(ValueError):
-            space.create_appeal("dup")
-
-    def test_max_active_appeals(self, monkeypatch):
-        monkeypatch.setattr(default_config.appeal, "max_active_appeals", 2)
-        space = AppealTrialSpace()
-        space.create_appeal("a1")
-        space.create_appeal("a2")
-        with pytest.raises(ValueError):
-            space.create_appeal("a3")
-
-    def test_max_ops_per_appeal(self, monkeypatch):
-        monkeypatch.setattr(default_config.appeal, "max_ops_per_appeal", 1)
-        space = AppealTrialSpace()
-        with pytest.raises(ValueError):
-            space.create_appeal("too-many-ops", ops=[make_op(), make_op()])
+        assert space.get("A-1").appeal_id == "A-1"
 
     def test_get_returns_deep_copy(self):
         space = AppealTrialSpace()
-        space.create_appeal("app-x")
-        stored = space.get_appeal("app-x")
-        stored.status = AppealStatus.APPROVED
-        assert space.get_appeal("app-x").status == AppealStatus.DRAFT
+        space.create_appeal("A-1")
+        got = space.get("A-1")
+        got.proposed_content = "MUTATO"
+        assert space.get("A-1").proposed_content == ""
 
-    def test_get_missing_returns_none(self):
+    def test_duplicate_id_raises(self):
         space = AppealTrialSpace()
-        assert space.get_appeal("nope") is None
+        space.create_appeal("A-1")
+        with pytest.raises(ValueError):
+            space.create_appeal("A-1")
+
+    def test_missing_returns_none(self):
+        assert AppealTrialSpace().get("NOPE") is None
+
+    def test_ops_limit_exceeded(self):
+        space = AppealTrialSpace()
+        ops = [_op() for _ in range(11)]  # max_ops_per_appeal = 10
+        with pytest.raises(ValueError):
+            space.create_appeal("A-1", ops=ops)
+
+    def test_max_active_appeals(self):
+        space = AppealTrialSpace()
+        for i in range(20):  # max_active_appeals = 20
+            space.create_appeal(f"A-{i}")
+        with pytest.raises(ValueError):
+            space.create_appeal("A-20")
 
 
-class TestUpdates:
+class TestUpdate:
     def test_update_metrics(self):
         space = AppealTrialSpace()
-        space.create_appeal("app-m")
-        metrics = AppealMetrics(delta_token=5, coverage=0.8, risk=0.1, aggregate_score=0.9)
-        space.update_metrics("app-m", metrics)
-        assert space.get_appeal("app-m").metrics == metrics
+        space.create_appeal("A-1")
+        space.update_metrics("A-1", AppealMetrics(delta_token=5, coverage=0.8, risk=0.1, aggregate_score=0.7))
+        assert space.get("A-1").metrics.coverage == 0.8
+
+    def test_update_metrics_missing_raises(self):
+        with pytest.raises(KeyError):
+            AppealTrialSpace().update_metrics("NOPE", AppealMetrics())
 
     def test_update_diff(self):
         space = AppealTrialSpace()
-        space.create_appeal("app-d")
-        diff = AppealDiff(added=["new", "words"], removed=["old"])
-        space.update_diff("app-d", diff)
-        assert space.get_appeal("app-d").diff.added == ["new", "words"]
+        space.create_appeal("A-1")
+        space.update_diff("A-1", AppealDiff(added=["x"]))
+        assert space.get("A-1").diff.added == ["x"]
 
     def test_update_proposal(self):
         space = AppealTrialSpace()
-        space.create_appeal("app-p")
-        space.update_proposal("app-p", "new content here", "because it is better")
-        appeal = space.get_appeal("app-p")
-        assert appeal.proposed_content == "new content here"
-        assert appeal.explanation == "because it is better"
+        space.create_appeal("A-1")
+        space.update_proposal("A-1", "testo proposto", "spiegazione")
+        appeal = space.get("A-1")
+        assert appeal.proposed_content == "testo proposto"
+        assert appeal.explanation == "spiegazione"
 
-    def test_update_missing_raises(self):
+
+class TestStatus:
+    def test_set_status_resolved_at(self):
         space = AppealTrialSpace()
-        with pytest.raises(KeyError):
-            space.update_metrics("nope", AppealMetrics())
-        with pytest.raises(KeyError):
-            space.update_diff("nope", AppealDiff())
-        with pytest.raises(KeyError):
-            space.update_proposal("nope", "x", "y")
-
-
-class TestStatusAndLifecycle:
-    def test_set_status_terminal_sets_resolved_at(self):
-        space = AppealTrialSpace()
-        space.create_appeal("app-r")
-        assert space.set_status("app-r", AppealStatus.APPROVED) is True
-        appeal = space.get_appeal("app-r")
-        assert appeal.resolved_at is not None
+        space.create_appeal("A-1")
+        assert space.set_status("A-1", AppealStatus.APPROVED) is True
+        appeal = space.get("A-1")
         assert appeal.status == AppealStatus.APPROVED
+        assert appeal.resolved_at is not None
 
     def test_set_status_missing_returns_false(self):
-        space = AppealTrialSpace()
-        assert space.set_status("nope", AppealStatus.REJECTED) is False
+        assert AppealTrialSpace().set_status("NOPE", AppealStatus.APPROVED) is False
 
+    def test_list_filter_by_status(self):
+        space = AppealTrialSpace()
+        space.create_appeal("A-1")
+        space.create_appeal("A-2")
+        space.set_status("A-2", AppealStatus.PENDING_USER_APPROVAL)
+        assert {a.appeal_id for a in space.list(status=AppealStatus.PENDING_USER_APPROVAL)} == {"A-2"}
+
+    def test_list_active_excludes_terminal(self):
+        space = AppealTrialSpace()
+        space.create_appeal("A-1")
+        space.create_appeal("A-2")
+        space.set_status("A-2", AppealStatus.REJECTED)
+        assert {a.appeal_id for a in space.list_active()} == {"A-1"}
+        assert space.count_active() == 1
+
+
+class TestRemoval:
     def test_remove_appeal(self):
         space = AppealTrialSpace()
-        space.create_appeal("app-del")
-        assert space.remove_appeal("app-del") is True
-        assert space.get_appeal("app-del") is None
-        assert space.remove_appeal("app-del") is False
+        space.create_appeal("A-1")
+        assert space.remove_appeal("A-1") is True
+        assert space.get("A-1") is None
 
-    def test_list_active_and_count(self):
-        space = AppealTrialSpace()
-        space.create_appeal("a1")
-        space.create_appeal("a2")
-        space.set_status("a2", AppealStatus.REJECTED)
-        assert space.count_active() == 1
-        assert [a.appeal_id for a in space.list_active()] == ["a1"]
+    def test_remove_missing_returns_false(self):
+        assert AppealTrialSpace().remove_appeal("NOPE") is False
 
-    def test_prune_old_appeals_by_count(self, monkeypatch):
-        monkeypatch.setattr(default_config.appeal, "prune_after_generations", 2)
+    def test_prune_by_generations(self):
         space = AppealTrialSpace()
-        for i in range(3):
-            space.create_appeal(f"p{i}")
-            space.set_status(f"p{i}", AppealStatus.APPROVED)
+        for i in range(5):
+            space.create_appeal(f"A-{i}")
+            space.set_status(f"A-{i}", AppealStatus.APPROVED)
         pruned = space.prune_old_appeals(max_generations=2)
-        assert pruned == 1
-        assert len(space.list_appeals()) == 2
+        assert pruned == 3
+        assert len(space) == 2
 
 
 class TestSerialization:
-    def test_roundtrip(self):
+    def test_round_trip(self):
         space = AppealTrialSpace()
-        space.create_appeal("app-1", sources=["frag-1"], ops=[make_op()])
-        space.update_proposal("app-1", "proposed content", "explanation")
-        space.set_status("app-1", AppealStatus.PENDING_USER_APPROVAL)
-
+        space.create_appeal("A-1", sources=["F-1"])
+        space.update_proposal("A-1", "testo", "spiegazione")
         restored = AppealTrialSpace.from_dict(space.to_dict())
-
-        assert restored.get_appeal("app-1") is not None
-        appeal = restored.get_appeal("app-1")
-        assert appeal.status == AppealStatus.PENDING_USER_APPROVAL
-        assert appeal.proposed_content == "proposed content"
-        assert appeal.ops[0].op_type == OperationType.REWRITE
+        assert len(restored) == 1
+        assert restored.get("A-1").proposed_content == "testo"

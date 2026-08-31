@@ -1,1 +1,1 @@
-"""Test suite for Memory Fragments v0.4.0 (V2)."""
+"""Test suite per Memory Fragments v0.3.0 V2."""

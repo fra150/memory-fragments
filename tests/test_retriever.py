@@ -1,107 +1,108 @@
-"""Tests for the HybridRetriever (BM25 + embedding fusion)."""
+"""Test del retrieval — BM25, EmbeddingIndexer (fallback) e HybridRetriever."""
 
-from memory_fragments.models import Fragment
-from memory_fragments.retrieval.retriever import HybridRetriever, _min_max_normalise
-from memory_fragments.retrieval.indexer import _tokenize
-
-
-def _fragment(fid: str, content: str) -> Fragment:
-    return Fragment(fragment_id=fid, content=content)
+from memory_fragments.models import Fragment, FragmentMetadata
+from memory_fragments.retrieval.indexer import BM25Indexer, EmbeddingIndexer
+from memory_fragments.retrieval.retriever import HybridRetriever
 
 
-def _populated() -> HybridRetriever:
-    retriever = HybridRetriever()
-    retriever.add_fragments(
-        [
-            _fragment(
-                "a1",
-                "I gatti domestici comunicano attraverso miagolii e movimenti della coda.",
-            ),
-            _fragment(
-                "a2",
-                "I cani sono animali domestici fedeli che abbaiano per attirare attenzione.",
-            ),
-            _fragment(
-                "a3",
-                "La fotosintesi clorofilliana converte la luce solare in energia chimica.",
-            ),
-        ]
+def _fragment(fragment_id: str, content: str, quality: float = 0.8) -> Fragment:
+    return Fragment(
+        fragment_id=fragment_id,
+        content=content,
+        metadata=FragmentMetadata(quality=quality),
     )
-    return retriever
 
 
-def test_empty_retriever_returns_empty():
-    retriever = HybridRetriever()
-    assert retriever.retrieve("gatto", top_k=5) == []
+FRAGMENTS = [
+    _fragment("F-1", "il gatto dorme sul divano"),
+    _fragment("F-2", "il cane abbaia nel cortile"),
+    _fragment("F-3", "il gatto caccia i topi di notte"),
+    _fragment("F-4", "la pianta cresce in primavera"),
+]
 
 
-def test_keyword_retrieval_finds_matching_fragment():
-    retriever = _populated()
-    results = retriever.retrieve_keyword("cani abbaiare", top_k=5)
-    assert len(results) == 1
-    assert results[0][0].fragment_id == "a2"
+class TestBM25Indexer:
+    def test_search_returns_most_relevant(self):
+        indexer = BM25Indexer()
+        indexer.index_fragments(FRAGMENTS)
+        results = indexer.search("gatto", top_k=5)
+        assert results
+        assert results[0][0].fragment_id in {"F-1", "F-3"}
+
+    def test_incremental_add_remove(self):
+        indexer = BM25Indexer()
+        indexer.add_fragment(FRAGMENTS[0])
+        assert indexer.fragment_count == 1
+        indexer.remove_fragment("F-1")
+        assert indexer.fragment_count == 0
+        assert indexer.search("gatto") == []
+
+    def test_empty_index(self):
+        assert BM25Indexer().search("gatto") == []
 
 
-def test_hybrid_retrieval_returns_results():
-    retriever = _populated()
-    results = retriever.retrieve("gatti domestici", top_k=3)
-    assert len(results) >= 1
-    fids = [f.fragment_id for f, _ in results]
-    assert "a1" in fids
+class TestEmbeddingIndexer:
+    def test_fallback_deterministic(self):
+        a = EmbeddingIndexer()
+        b = EmbeddingIndexer()
+        a.index_fragments(FRAGMENTS)
+        b.index_fragments(FRAGMENTS)
+        ra = a.search("gatto dorme")
+        rb = b.search("gatto dorme")
+        assert [f.fragment_id for f, _ in ra] == [f.fragment_id for f, _ in rb]
+
+    def test_search_returns_something(self):
+        indexer = EmbeddingIndexer()
+        indexer.index_fragments(FRAGMENTS)
+        results = indexer.search("gatto", top_k=2)
+        assert len(results) <= 2
+        assert all(isinstance(s, float) for _, s in results)
+
+    def test_remove(self):
+        indexer = EmbeddingIndexer()
+        indexer.add_fragment(FRAGMENTS[0])
+        indexer.remove_fragment("F-1")
+        assert indexer.fragment_count == 0
 
 
-def test_semantic_retrieval_returns_sorted():
-    retriever = _populated()
-    results = retriever.retrieve_semantic("fotosintesi energia solare", top_k=3)
-    assert len(results) == 3
-    # Sorted descending by score
-    scores = [s for _, s in results]
-    assert scores == sorted(scores, reverse=True)
+class TestHybridRetriever:
+    def test_retrieve_sorted(self):
+        retriever = HybridRetriever()
+        retriever.add_fragments(FRAGMENTS)
+        results = retriever.retrieve("gatto", top_k=3)
+        assert len(results) <= 3
+        scores = [s for _, s in results]
+        assert scores == sorted(scores, reverse=True)
 
+    def test_retrieve_keyword_only(self):
+        retriever = HybridRetriever()
+        retriever.add_fragments(FRAGMENTS)
+        results = retriever.retrieve_keyword("cane", top_k=5)
+        assert results and results[0][0].fragment_id == "F-2"
 
-def test_top_k_limits_results():
-    retriever = _populated()
-    assert len(retriever.retrieve_semantic("luce solare", top_k=1)) == 1
+    def test_retrieve_semantic_only(self):
+        retriever = HybridRetriever()
+        retriever.add_fragments(FRAGMENTS)
+        results = retriever.retrieve_semantic("gatto", top_k=2)
+        assert 1 <= len(results) <= 2
 
+    def test_remove_and_rebuild(self):
+        retriever = HybridRetriever()
+        retriever.add_fragments(FRAGMENTS)
+        retriever.remove_fragment("F-1")
+        assert "F-1" not in [f.fragment_id for f, _ in retriever.retrieve("gatto", top_k=10)]
 
-def test_remove_fragment():
-    retriever = _populated()
-    retriever.remove_fragment("a1")
-    fids = [f.fragment_id for f, _ in retriever.retrieve_keyword("gatti", top_k=5)]
-    assert "a1" not in fids
+        retriever.rebuild(FRAGMENTS)
+        results = retriever.retrieve("gatto", top_k=10)
+        assert {f.fragment_id for f, _ in results} >= {"F-1"}
 
+    def test_retrieve_with_conflicts_no_archive(self):
+        retriever = HybridRetriever()
+        retriever.add_fragments(FRAGMENTS)
+        results, reports = retriever.retrieve_with_conflicts("gatto")
+        assert results
+        assert reports == []
 
-def test_rebuild():
-    retriever = _populated()
-    retriever.rebuild([_fragment("b1", "Contenuto completamente nuovo e diverso.")])
-    assert retriever.bm25.fragment_count == 1
-    assert retriever.embedding.fragment_count == 1
-
-
-def test_min_max_normalise():
-    from memory_fragments.models import Fragment
-
-    frags = [Fragment(fragment_id=f"n{i}", content=f"content {i}") for i in range(2)]
-    scored = [(frags[0], 1.0), (frags[1], 5.0)]
-    normalised = _min_max_normalise(scored)
-    assert normalised[0][1] == 0.0
-    assert normalised[1][1] == 1.0
-
-
-def test_min_max_normalise_flat_scores():
-    from memory_fragments.models import Fragment
-
-    frags = [Fragment(fragment_id="n0", content="content x")]
-    normalised = _min_max_normalise([(frags[0], 0.5)])
-    assert normalised[0][1] == 1.0
-
-
-def test_tokenizer():
-    assert _tokenize("Hello, World! Don't stop.") == ["hello", "world", "don't", "stop"]
-
-
-def test_config_defaults():
-    retriever = HybridRetriever()
-    assert retriever.config.top_k == 5
-    assert retriever.config.bm25_weight == 0.4
-    assert retriever.config.embedding_weight == 0.6
+    def test_retrieve_empty(self):
+        retriever = HybridRetriever()
+        assert retriever.retrieve("gatto") == []

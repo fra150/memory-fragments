@@ -296,6 +296,13 @@ class AgentCircuit:
                 metadata=meta,
             ))
 
+        # add_evaluation() sovrascrive final_quality/final_source con il singolo
+        # voto; il risultato aggregato del consenso ha la precedenza.
+        provenance.set_consensus(
+            score=vote_result.mean_score,
+            method=f"majority_vote_{TOTAL_AGENTS}",
+        )
+
         fragment.metadata.provenance = provenance
         return fragment
 

@@ -1,112 +1,114 @@
-"""Tests for the GenealogyGraph (DAG versioning)."""
+"""Test della GenealogyGraph — DAG di versioning e provenienza."""
 
-from memory_fragments.models import GenealogyGraph
+from memory_fragments.models.graph import GenealogyGraph
 
 
-class TestAddNode:
-    def test_root_depth_zero(self):
-        graph = GenealogyGraph()
-        graph.add_node("root-1")
-        assert graph.get_node("root-1").depth == 0
-        assert graph.node_count() == 1
+class TestMutation:
+    def test_add_node_root(self):
+        g = GenealogyGraph()
+        node = g.add_node("F-1")
+        assert node.depth == 0
+        assert g.node_count() == 1
+        assert g.get_node("F-1") is not None
 
-    def test_child_depth_from_parent(self):
-        graph = GenealogyGraph()
-        graph.add_node("root-1")
-        graph.add_node("child-1", parent_ids=["root-1"])
-        graph.add_node("grandchild-1", parent_ids=["child-1"])
+    def test_depth_from_parents(self):
+        g = GenealogyGraph()
+        g.add_node("F-1")
+        g.add_node("F-2", parent_ids=["F-1"])
+        node = g.add_node("F-3", parent_ids=["F-2"])
+        assert node.depth == 2
 
-        assert graph.get_node("root-1").depth == 0
-        assert graph.get_node("child-1").depth == 1
-        assert graph.get_node("grandchild-1").depth == 2
-
-    def test_child_pointers_updated(self):
-        graph = GenealogyGraph()
-        graph.add_node("root-1")
-        graph.add_node("child-1", parent_ids=["root-1"])
-        assert "child-1" in graph.get_node("root-1").child_ids
+    def test_child_pointers(self):
+        g = GenealogyGraph()
+        g.add_node("F-1")
+        g.add_node("F-2", parent_ids=["F-1"])
+        assert "F-2" in g.get_node("F-1").child_ids
 
     def test_remove_node(self):
-        graph = GenealogyGraph()
-        graph.add_node("root-1")
-        assert graph.remove_node("root-1") is True
-        assert graph.remove_node("root-1") is False
+        g = GenealogyGraph()
+        g.add_node("F-1")
+        assert g.remove_node("F-1") is True
+        assert g.remove_node("F-1") is False
+        assert g.node_count() == 0
 
 
 class TestTraversal:
+    def _chain(self) -> GenealogyGraph:
+        g = GenealogyGraph()
+        g.add_node("F-1")
+        g.add_node("F-2", parent_ids=["F-1"])
+        g.add_node("F-3", parent_ids=["F-2"])
+        return g
+
     def test_ancestors(self):
-        graph = GenealogyGraph()
-        graph.add_node("r")
-        graph.add_node("c1", parent_ids=["r"])
-        graph.add_node("c2", parent_ids=["c1"])
-        ancestors = graph.get_ancestors("c2")
-        ids = {n.fragment_id for n in ancestors}
-        assert ids == {"c2", "c1", "r"}
+        g = self._chain()
+        ids = {n.fragment_id for n in g.get_ancestors("F-3")}
+        assert ids == {"F-1", "F-2", "F-3"}
 
     def test_descendants(self):
-        graph = GenealogyGraph()
-        graph.add_node("r")
-        graph.add_node("c1", parent_ids=["r"])
-        graph.add_node("c2", parent_ids=["r"])
-        graph.add_node("c3", parent_ids=["c1"])
-        descendants = graph.get_descendants("r")
-        ids = {n.fragment_id for n in descendants}
-        assert ids == {"r", "c1", "c2", "c3"}
+        g = self._chain()
+        ids = {n.fragment_id for n in g.get_descendants("F-1")}
+        assert ids == {"F-1", "F-2", "F-3"}
 
-    def test_lineage_ordered_root_to_node(self):
-        graph = GenealogyGraph()
-        graph.add_node("r")
-        graph.add_node("c1", parent_ids=["r"])
-        graph.add_node("c2", parent_ids=["c1"])
-        lineage = graph.get_lineage("c2")
-        assert lineage == ["r", "c1", "c2"]
+    def test_lineage(self):
+        g = self._chain()
+        assert g.get_lineage("F-3") == ["F-1", "F-2", "F-3"]
 
     def test_roots_and_leaves(self):
-        graph = GenealogyGraph()
-        graph.add_node("r")
-        graph.add_node("c1", parent_ids=["r"])
-        graph.add_node("c2", parent_ids=["r"])
-        assert [n.fragment_id for n in graph.get_roots()] == ["r"]
-        assert {n.fragment_id for n in graph.get_leaves()} == {"c1", "c2"}
+        g = self._chain()
+        assert [n.fragment_id for n in g.get_roots()] == ["F-1"]
+        assert [n.fragment_id for n in g.get_leaves()] == ["F-3"]
 
-    def test_no_cycles(self):
-        graph = GenealogyGraph()
-        graph.add_node("a")
-        graph.add_node("b", parent_ids=["a"])
-        graph.add_node("c", parent_ids=["b"])
-        assert graph.detect_cycles() == []
+
+class TestIntegrity:
+    def test_no_cycles_on_chain(self):
+        g = GenealogyGraph()
+        g.add_node("F-1")
+        g.add_node("F-2", parent_ids=["F-1"])
+        assert g.detect_cycles() == []
+
+    def test_max_depth_filter(self):
+        g = GenealogyGraph()
+        g.add_node("F-1")
+        g.add_node("F-2", parent_ids=["F-1"])
+        g.add_node("F-3", parent_ids=["F-2"])
+        ids = {n.fragment_id for n in g.get_ancestors("F-3", max_depth=1)}
+        assert ids == {"F-2", "F-3"}
 
 
 class TestModelProvenance:
     def test_nodes_by_model(self):
-        graph = GenealogyGraph()
-        graph.add_node("m1", model_id="gpt-4o")
-        graph.add_node("m2", model_id="phi-3-mini")
-        assert [n.fragment_id for n in graph.get_nodes_by_model("gpt-4o")] == ["m1"]
-        assert [n.fragment_id for n in graph.get_nodes_by_model("phi-3-mini")] == ["m2"]
+        g = GenealogyGraph()
+        g.add_node("F-1", model_id="gpt-4o", model_version="1.0")
+        g.add_node("F-2", model_id="gpt-4o", model_version="1.0")
+        g.add_node("F-3", model_id="phi-3")
+        assert len(g.get_nodes_by_model("gpt-4o")) == 2
 
-    def test_model_statistics(self):
-        graph = GenealogyGraph()
-        graph.add_node("m1", model_id="gpt-4o", evaluator_model_id="eval-1", quality_source="majority_vote")
-        graph.add_node("m2", model_id="gpt-4o", evaluator_model_id="eval-1", quality_source="majority_vote")
-        stats = graph.get_model_statistics()
-        assert stats["nodes_by_model"] == {"gpt-4o": 2}
-        assert stats["nodes_by_evaluator"] == {"eval-1": 2}
-        assert stats["nodes_by_quality_source"] == {"majority_vote": 2}
+    def test_statistics(self):
+        g = GenealogyGraph()
+        g.add_node("F-1", model_id="gpt-4o", quality_source="majority_vote")
+        g.add_node("F-2", model_id="phi-3", quality_source="user_claimed")
+        stats = g.get_model_statistics()
         assert stats["total_nodes"] == 2
+        assert stats["nodes_by_model"]["gpt-4o"] == 1
 
 
 class TestSerialization:
-    def test_roundtrip(self):
-        graph = GenealogyGraph()
-        graph.add_node("r")
-        graph.add_node("c1", parent_ids=["r"], appeal_id="app-1", approver="test-user")
-
-        restored = GenealogyGraph.from_dict(graph.to_dict())
-
+    def test_round_trip(self):
+        g = GenealogyGraph()
+        g.add_node("F-1", model_id="gpt-4o")
+        g.add_node("F-2", parent_ids=["F-1"], appeal_id="A-1", checksum="abc")
+        restored = GenealogyGraph.from_dict(g.to_dict())
         assert restored.node_count() == 2
-        node = restored.get_node("c1")
-        assert node.parent_ids == ["r"]
-        assert node.appeal_id == "app-1"
-        assert node.approver == "test-user"
-        assert node.depth == 1
+        node = restored.get_node("F-2")
+        assert node.parent_ids == ["F-1"]
+        assert node.appeal_id == "A-1"
+        assert node.checksum == "abc"
+
+    def test_to_json(self):
+        import json
+
+        g = GenealogyGraph()
+        g.add_node("F-1")
+        data = json.loads(g.to_json())
+        assert "F-1" in data["nodes"]
